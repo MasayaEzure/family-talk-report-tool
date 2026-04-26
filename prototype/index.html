@@ -60,10 +60,8 @@
     <section class="bg-white rounded-lg shadow p-4 space-y-3">
       <h2 class="font-semibold">デバッグ</h2>
       <audio id="audioPlayer" controls class="w-full"></audio>
-      <div>
-        <a id="downloadLink" class="inline-block px-3 py-2 rounded bg-gray-800 text-white text-sm pointer-events-none opacity-50" download>
-          録音ファイルをダウンロード
-        </a>
+      <div id="downloadArea" class="space-y-1 text-sm text-gray-500">
+        （録音終了後にダウンロードリンクが表示されます）
       </div>
     </section>
   </div>
@@ -72,15 +70,21 @@
 // ---------------------------------------------------
 // 状態オブジェクト
 // ---------------------------------------------------
+// チャンク分割: Netlify Functions の 6MB ボディ制限と 26秒 実行制限を回避するため、
+// 5分ごとに MediaRecorder を stop/start し直して独立した複数 Blob を生成する。
+// 録音終了後は全 Blob を Whisper Function へ並列送信し、結果テキストを連結して Claude に渡す。
+const SEGMENT_DURATION_MS = 5 * 60 * 1000; // 5分
+
 const state = {
-  mediaRecorder: null,
-  chunks: [],
   stream: null,
+  mediaRecorder: null,
+  currentChunks: [],   // 現在録音中のセグメントの ondataavailable データ
+  segments: [],        // 確定したセグメント Blob の配列
   recording: false,
   startTime: 0,
-  timerId: null,
+  timerId: null,        // 経過時間表示用
+  segmentTimerId: null, // セグメント切替用
   mimeType: '',
-  lastBlob: null,
 };
 
 const el = {
@@ -92,7 +96,7 @@ const el = {
   claudeRaw: document.getElementById('claudeRaw'),
   reportFrame: document.getElementById('reportFrame'),
   audioPlayer: document.getElementById('audioPlayer'),
-  downloadLink: document.getElementById('downloadLink'),
+  downloadArea: document.getElementById('downloadArea'),
 };
 
 // ---------------------------------------------------
@@ -149,23 +153,14 @@ async function startRecording() {
   }
 
   state.mimeType = pickMimeType();
-  el.recordingMime.textContent = '録音形式: ' + (state.mimeType || '(ブラウザデフォルト)');
+  el.recordingMime.textContent = '録音形式: ' + (state.mimeType || '(ブラウザデフォルト)') + ` / ${SEGMENT_DURATION_MS / 60000}分ごとに自動分割`;
+  state.segments = [];
 
-  const opts = state.mimeType ? { mimeType: state.mimeType } : undefined;
-  try {
-    state.mediaRecorder = new MediaRecorder(state.stream, opts);
-  } catch (e) {
-    log('MediaRecorder作成失敗: ' + e.message, 'err');
+  // 最初のセグメント開始
+  if (!startNewSegment()) {
     stopStream();
     return;
   }
-
-  state.chunks = [];
-  state.mediaRecorder.ondataavailable = (ev) => {
-    if (ev.data && ev.data.size > 0) state.chunks.push(ev.data);
-  };
-  state.mediaRecorder.onstop = onRecordingStopped;
-  state.mediaRecorder.start();
 
   state.recording = true;
   state.startTime = Date.now();
@@ -174,13 +169,68 @@ async function startRecording() {
     el.elapsed.textContent = fmtElapsed(Date.now() - state.startTime);
   }, 500);
 
+  // 5分ごとにセグメントをローテーション（録音は継続）
+  state.segmentTimerId = setInterval(rotateSegment, SEGMENT_DURATION_MS);
+
   el.recordBtn.textContent = '■ 録音終了';
   el.recordBtn.classList.remove('bg-red-600');
   el.recordBtn.classList.add('bg-gray-700');
   log('録音開始', 'ok');
 }
 
+// 新しいセグメントの MediaRecorder を作成して録音開始
+// onstop ハンドラ内で：継続中なら次セグメント開始、停止指示なら最終処理を行う
+function startNewSegment() {
+  const opts = state.mimeType ? { mimeType: state.mimeType } : undefined;
+  let mr;
+  try {
+    mr = new MediaRecorder(state.stream, opts);
+  } catch (e) {
+    log('MediaRecorder作成失敗: ' + e.message, 'err');
+    return false;
+  }
+
+  state.currentChunks = [];
+  mr.ondataavailable = (ev) => {
+    if (ev.data && ev.data.size > 0) state.currentChunks.push(ev.data);
+  };
+  mr.onstop = () => {
+    const usedMime = mr.mimeType || state.mimeType || 'audio/webm';
+    const blob = new Blob(state.currentChunks, { type: usedMime });
+    if (blob.size > 0) {
+      state.segments.push(blob);
+      const sizeKB = (blob.size / 1024).toFixed(1);
+      log(`セグメント${state.segments.length} 確定（${sizeKB} KB）`);
+    }
+    if (state.recording) {
+      // 録音継続中：次セグメントへ
+      startNewSegment();
+    } else {
+      // ユーザーが停止：最終化
+      finalizeRecording(usedMime);
+    }
+  };
+  state.mediaRecorder = mr;
+  mr.start();
+  return true;
+}
+
+// 5分タイマーが発火した際の処理：現セグメントを stop（onstop で次セグメントが自動開始）
+function rotateSegment() {
+  if (!state.recording) return;
+  if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
+    state.mediaRecorder.stop();
+  }
+}
+
 function stopRecording() {
+  // タイマーを止めてからフラグを下ろし、現セグメントを停止する
+  // onstop は recording=false を見て finalizeRecording を呼ぶ
+  if (state.segmentTimerId) {
+    clearInterval(state.segmentTimerId);
+    state.segmentTimerId = null;
+  }
+  state.recording = false;
   if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
     state.mediaRecorder.stop();
   }
@@ -193,30 +243,57 @@ function stopStream() {
   }
 }
 
-async function onRecordingStopped() {
+async function finalizeRecording(usedMime) {
   clearInterval(state.timerId);
   state.timerId = null;
-  state.recording = false;
   el.recordBtn.textContent = '● 録音開始';
   el.recordBtn.classList.add('bg-red-600');
   el.recordBtn.classList.remove('bg-gray-700');
-
-  const usedMime = state.mediaRecorder?.mimeType || state.mimeType || 'audio/webm';
-  const blob = new Blob(state.chunks, { type: usedMime });
-  state.lastBlob = blob;
   stopStream();
 
-  const url = URL.createObjectURL(blob);
-  el.audioPlayer.src = url;
-  el.downloadLink.href = url;
-  el.downloadLink.download = 'recording.' + extFromMime(usedMime);
-  el.downloadLink.classList.remove('pointer-events-none', 'opacity-50');
+  const segments = state.segments;
+  if (segments.length === 0) {
+    log('録音データがありません', 'err');
+    return;
+  }
 
-  const sizeKB = (blob.size / 1024).toFixed(1);
-  log(`録音終了（${sizeKB} KB, ${usedMime}）`, 'ok');
+  // ダウンロードリンクと再生プレイヤーを構築
+  renderDownloadLinks(segments, usedMime);
+  el.audioPlayer.src = URL.createObjectURL(segments[0]);
 
-  // パイプライン起動
-  await runPipeline(blob, usedMime);
+  const totalKB = (segments.reduce((sum, b) => sum + b.size, 0) / 1024).toFixed(1);
+  log(`録音終了（${segments.length}セグメント / 合計 ${totalKB} KB / ${usedMime}）`, 'ok');
+
+  await runPipeline(segments, usedMime);
+}
+
+function renderDownloadLinks(segments, mime) {
+  const ext = extFromMime(mime);
+  el.downloadArea.innerHTML = '';
+  if (segments.length === 1) {
+    el.downloadArea.appendChild(buildDownloadAnchor(segments[0], `recording.${ext}`, '録音ファイルをダウンロード'));
+  } else {
+    const note = document.createElement('p');
+    note.className = 'text-xs text-gray-500';
+    note.textContent = `${segments.length}個のセグメントに分割されています（先頭セグメントを再生プレイヤーで確認できます）`;
+    el.downloadArea.appendChild(note);
+    segments.forEach((blob, i) => {
+      const num = String(i + 1).padStart(2, '0');
+      const sizeKB = (blob.size / 1024).toFixed(1);
+      el.downloadArea.appendChild(
+        buildDownloadAnchor(blob, `recording-${num}.${ext}`, `セグメント${i + 1} (${sizeKB} KB)`)
+      );
+    });
+  }
+}
+
+function buildDownloadAnchor(blob, filename, label) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.className = 'inline-block mr-2 mb-1 px-3 py-2 rounded bg-gray-800 text-white text-sm';
+  a.textContent = label;
+  return a;
 }
 
 el.recordBtn.addEventListener('click', () => {
@@ -227,27 +304,46 @@ el.recordBtn.addEventListener('click', () => {
 // ---------------------------------------------------
 // 文字起こし（Netlify Functions 経由で Whisper を呼ぶ）
 // ---------------------------------------------------
-async function transcribeWithWhisper(blob, mime) {
-  log('文字起こし開始（Whisper）');
+
+// 単一セグメントの文字起こし
+async function transcribeSegment(blob, mime, index) {
   const form = new FormData();
-  const filename = 'recording.' + extFromMime(mime);
+  const filename = `recording-${String(index + 1).padStart(2, '0')}.` + extFromMime(mime);
   form.append('file', blob, filename);
 
   const res = await fetch('/.netlify/functions/transcribe', {
     method: 'POST',
     body: form,
   });
-
   const bodyText = await res.text();
   if (!res.ok) {
-    throw new Error('文字起こし失敗 (HTTP ' + res.status + '): ' + bodyText);
+    throw new Error(`セグメント${index + 1} 失敗 (HTTP ${res.status}): ${bodyText}`);
   }
   let data;
   try { data = JSON.parse(bodyText); }
-  catch (e) { throw new Error('文字起こしレスポンスの解析失敗: ' + bodyText); }
-
-  log('文字起こし完了', 'ok');
+  catch (e) { throw new Error(`セグメント${index + 1} レスポンス解析失敗: ${bodyText}`); }
   return data.text || '';
+}
+
+// 全セグメントを並列で文字起こしし、テキストを結合して返す
+async function transcribeAllSegments(segments, mime) {
+  log(`文字起こし開始（Whisper, ${segments.length}セグメント並列）`);
+
+  let completed = 0;
+  const tasks = segments.map((blob, i) =>
+    transcribeSegment(blob, mime, i)
+      .then(text => {
+        completed++;
+        log(`セグメント${i + 1} 完了（${completed}/${segments.length}）`, 'ok');
+        return text;
+      })
+  );
+
+  // 1つでも失敗したら全体失敗扱い
+  const texts = await Promise.all(tasks);
+  log('文字起こし完了', 'ok');
+  // チャンク境界が分かるよう改行2つで連結
+  return texts.join('\n\n');
 }
 
 // ---------------------------------------------------
@@ -358,7 +454,7 @@ function buildReportHtml(data) {
 // ---------------------------------------------------
 // パイプライン
 // ---------------------------------------------------
-async function runPipeline(blob, mime) {
+async function runPipeline(segments, mime) {
   // 結果欄リセット
   el.transcriptText.textContent = '';
   el.claudeRaw.textContent = '';
@@ -366,7 +462,7 @@ async function runPipeline(blob, mime) {
 
   let transcript;
   try {
-    transcript = await transcribeWithWhisper(blob, mime);
+    transcript = await transcribeAllSegments(segments, mime);
     el.transcriptText.textContent = transcript;
   } catch (e) {
     log('文字起こし失敗: ' + e.message, 'err');
