@@ -6,14 +6,15 @@
 <title>えづ録 - 家族会議レポート</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
-  /* 画面切替: body[data-screen] で表示する .screen-* を制御 */
-  .screen { display: none; }
-  body[data-screen="recording"] .screen-recording { display: flex; }
-  body[data-screen="result"]    .screen-result    { display: block; }
+  /* 画面切替: body[data-screen] で表示する .screen-* を制御
+     Tailwind の `flex` 等が同じ詳細度で衝突するため !important で上書きする */
+  .screen { display: none !important; }
+  body[data-screen="recording"] .screen-recording { display: flex !important; }
+  body[data-screen="result"]    .screen-result    { display: block !important; }
 
   /* オーバーレイ: .active が付いたときのみ表示 */
-  .overlay { display: none; }
-  .overlay.active { display: flex; }
+  .overlay { display: none !important; }
+  .overlay.active { display: flex !important; }
 
   /* スピナー（CSSのみ） */
   .spinner {
