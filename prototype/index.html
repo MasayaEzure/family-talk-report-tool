@@ -28,6 +28,13 @@
 
   .log-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 
+  /* <summary> の標準三角マーカーを非表示にする
+     （Safari/旧Chrome向けの -webkit-details-marker と、
+       Firefox向けの list-style、新Chrome向けの ::marker を網羅） */
+  summary { list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::marker { content: ''; }
+
   /* 録音ボタン: モバイルで親指で押せる大きさ */
   .record-btn {
     width: 160px; height: 160px;
