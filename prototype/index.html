@@ -35,17 +35,15 @@
   summary::-webkit-details-marker { display: none; }
   summary::marker { content: ''; }
 
-  /* 開閉に応じて回転するシェブロン（独自の三角マーカー） */
+  /* 開閉に応じて回転するシェブロン（独自の三角マーカー）
+     Tailwind preflight が ::before の border を 0 にリセットするため、
+     CSSのborderトリックではなくUnicode文字で描画する */
   summary::before {
-    content: '';
+    content: '▶';
     display: inline-block;
-    width: 0;
-    height: 0;
     margin-right: 0.5em;
-    border-left: 6px solid currentColor;
-    border-top: 5px solid transparent;
-    border-bottom: 5px solid transparent;
-    vertical-align: middle;
+    font-size: 0.75em;
+    color: currentColor;
     transition: transform 0.15s ease;
   }
   details[open] > summary::before {
