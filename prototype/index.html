@@ -6,101 +6,229 @@
 <title>えづ録 - 家族会議レポート</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
+  /* 画面切替: body[data-screen] で表示する .screen-* を制御 */
+  .screen { display: none; }
+  body[data-screen="recording"] .screen-recording { display: flex; }
+  body[data-screen="result"]    .screen-result    { display: block; }
+
+  /* オーバーレイ: .active が付いたときのみ表示 */
+  .overlay { display: none; }
+  .overlay.active { display: flex; }
+
+  /* スピナー（CSSのみ） */
+  .spinner {
+    width: 56px; height: 56px;
+    border: 5px solid #e5e7eb;
+    border-top-color: #dc2626;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   .log-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+  /* 録音ボタン: モバイルで親指で押せる大きさ */
+  .record-btn {
+    width: 160px; height: 160px;
+    border-radius: 9999px;
+    font-size: 1.125rem;
+    box-shadow: 0 6px 20px rgba(220, 38, 38, 0.25);
+    transition: transform 0.1s ease;
+  }
+  .record-btn:active { transform: scale(0.96); }
 </style>
 </head>
-<body class="bg-gray-50 text-gray-900 min-h-screen">
-  <div class="max-w-3xl mx-auto p-4 space-y-6">
-    <header class="py-4 border-b">
-      <h1 class="text-2xl font-bold">えづ録</h1>
-      <p class="text-sm text-gray-500">家族会議レポート自動化ツール</p>
-    </header>
+<body data-screen="recording" class="bg-gray-50 text-gray-900 min-h-screen">
 
-    <!-- 録音 -->
-    <section class="bg-white rounded-lg shadow p-4 space-y-3">
-      <h2 class="font-semibold">録音</h2>
-      <div class="flex items-center gap-4">
-        <button id="recordBtn" class="px-4 py-2 rounded bg-red-600 text-white font-medium">
-          ● 録音開始
-        </button>
-        <span class="text-sm">経過時間: <span id="elapsed" class="font-mono">00:00</span></span>
+<!-- ============================================================
+     録音画面
+============================================================ -->
+<div class="screen screen-recording min-h-screen flex flex-col items-center justify-center px-4 py-8">
+  <header class="text-center mb-12">
+    <h1 class="text-3xl font-bold">えづ録</h1>
+    <p class="text-sm text-gray-500 mt-1">家族会議レポート自動化ツール</p>
+  </header>
+
+  <button id="recordBtn" class="record-btn bg-red-600 text-white font-medium">
+    <span id="recordBtnLabel">● 録音開始</span>
+  </button>
+
+  <div id="elapsed" class="font-mono text-3xl text-gray-700 mt-10">00:00</div>
+</div>
+
+<!-- ============================================================
+     結果画面
+============================================================ -->
+<div class="screen screen-result min-h-screen">
+  <header class="bg-white border-b sticky top-0 z-10">
+    <div class="max-w-3xl mx-auto px-4 py-3">
+      <button id="restartBtn" class="text-sm text-blue-600 hover:underline">
+        ← もう一度録音する
+      </button>
+    </div>
+  </header>
+
+  <main class="max-w-3xl mx-auto p-4 space-y-4">
+    <!-- レポートプレビュー -->
+    <iframe id="reportFrame" class="w-full h-[70vh] border rounded bg-white"></iframe>
+
+    <!-- 詳細セクション（折りたたみ） -->
+    <details class="bg-white rounded-lg shadow">
+      <summary class="cursor-pointer px-4 py-3 font-medium text-sm">▼ 詳細を見る</summary>
+      <div class="px-4 pb-4 space-y-3">
+
+        <details class="border rounded">
+          <summary class="cursor-pointer px-3 py-2 bg-gray-50 text-sm font-medium">文字起こし全文</summary>
+          <pre id="transcriptText" class="p-3 text-sm whitespace-pre-wrap break-words"></pre>
+        </details>
+
+        <details class="border rounded">
+          <summary class="cursor-pointer px-3 py-2 bg-gray-50 text-sm font-medium">Claude 生JSON出力</summary>
+          <pre id="claudeRaw" class="p-3 text-sm whitespace-pre-wrap break-words"></pre>
+        </details>
+
+        <div class="border rounded p-3 space-y-2">
+          <h3 class="text-sm font-semibold">音声プレイヤー（先頭セグメントのみ）</h3>
+          <audio id="audioPlayer" controls class="w-full"></audio>
+          <h3 class="text-sm font-semibold pt-2">録音ファイルのダウンロード</h3>
+          <div id="downloadArea" class="space-y-1 text-sm text-gray-500"></div>
+        </div>
+
+        <div class="border rounded p-3">
+          <h3 class="text-sm font-semibold mb-2">進捗ログ</h3>
+          <div id="logArea" class="bg-gray-900 text-gray-100 rounded p-3 max-h-64 overflow-auto space-y-1">
+            <div class="log-line text-gray-400">（ここにログが表示されます）</div>
+          </div>
+        </div>
+
       </div>
-      <p id="recordingMime" class="text-xs text-gray-500"></p>
-    </section>
+    </details>
+  </main>
+</div>
 
-    <!-- 進捗ログ -->
-    <section class="bg-white rounded-lg shadow p-4 space-y-2">
-      <h2 class="font-semibold">進捗ログ</h2>
-      <div id="logArea" class="bg-gray-900 text-gray-100 rounded p-3 max-h-64 overflow-auto space-y-1">
-        <div class="log-line text-gray-400">（ここにログが表示されます）</div>
-      </div>
-    </section>
-
-    <!-- 結果表示 -->
-    <section class="bg-white rounded-lg shadow p-4 space-y-3">
-      <h2 class="font-semibold">結果</h2>
-
-      <details class="border rounded">
-        <summary class="cursor-pointer px-3 py-2 bg-gray-100 text-sm font-medium">文字起こし全文</summary>
-        <pre id="transcriptText" class="p-3 text-sm whitespace-pre-wrap break-words"></pre>
-      </details>
-
-      <details class="border rounded">
-        <summary class="cursor-pointer px-3 py-2 bg-gray-100 text-sm font-medium">Claude 生JSON出力</summary>
-        <pre id="claudeRaw" class="p-3 text-sm whitespace-pre-wrap break-words"></pre>
-      </details>
-
-      <div>
-        <h3 class="text-sm font-semibold mb-2">HTMLレポート プレビュー</h3>
-        <iframe id="reportFrame" class="w-full h-[600px] border rounded bg-white"></iframe>
-      </div>
-    </section>
-
-    <!-- デバッグ -->
-    <section class="bg-white rounded-lg shadow p-4 space-y-3">
-      <h2 class="font-semibold">デバッグ</h2>
-      <audio id="audioPlayer" controls class="w-full"></audio>
-      <div id="downloadArea" class="space-y-1 text-sm text-gray-500">
-        （録音終了後にダウンロードリンクが表示されます）
-      </div>
-    </section>
+<!-- ============================================================
+     処理中オーバーレイ
+============================================================ -->
+<div id="overlayProcessing" class="overlay fixed inset-0 bg-black/60 z-50 items-center justify-center px-4">
+  <div class="bg-white rounded-xl shadow-lg p-6 w-full max-w-sm text-center space-y-4">
+    <div class="spinner mx-auto"></div>
+    <div>
+      <p id="processingStep" class="text-base font-medium">処理中…</p>
+      <p id="processingProgress" class="text-sm text-gray-500 mt-1"></p>
+    </div>
   </div>
+</div>
+
+<!-- ============================================================
+     エラーオーバーレイ
+============================================================ -->
+<div id="overlayError" class="overlay fixed inset-0 bg-black/60 z-50 items-center justify-center px-4">
+  <div class="bg-white rounded-xl shadow-lg p-6 w-full max-w-md space-y-4">
+    <div class="text-center">
+      <div class="text-4xl">❌</div>
+      <p id="errorStep" class="text-lg font-semibold mt-2">エラー</p>
+    </div>
+    <pre id="errorMessage" class="text-xs whitespace-pre-wrap break-words bg-gray-100 rounded p-3 max-h-60 overflow-auto"></pre>
+    <div>
+      <p class="text-xs text-gray-500 mb-1">録音は保持されています：</p>
+      <div id="errorDownloadArea" class="space-y-1"></div>
+    </div>
+    <button id="errorBackBtn" class="w-full py-2 rounded bg-gray-800 text-white text-sm font-medium">
+      録音画面に戻る
+    </button>
+  </div>
+</div>
 
 <script>
 // ---------------------------------------------------
 // 状態オブジェクト
 // ---------------------------------------------------
 // チャンク分割: Netlify Functions の 6MB ボディ制限と 26秒 実行制限を回避するため、
-// 5分ごとに MediaRecorder を stop/start し直して独立した複数 Blob を生成する。
+// 一定時間ごとに MediaRecorder を stop/start し直して独立した複数 Blob を生成する。
 // 録音終了後は全 Blob を Whisper Function へ並列送信し、結果テキストを連結して Claude に渡す。
 const SEGMENT_DURATION_MS = 4 * 60 * 1000; // 4分
 
 const state = {
   stream: null,
   mediaRecorder: null,
-  currentChunks: [],   // 現在録音中のセグメントの ondataavailable データ
-  segments: [],        // 確定したセグメント Blob の配列
+  currentChunks: [],
+  segments: [],
   recording: false,
   startTime: 0,
-  timerId: null,        // 経過時間表示用
-  segmentTimerId: null, // セグメント切替用
+  timerId: null,
+  segmentTimerId: null,
   mimeType: '',
+  lastUsedMime: '',  // 最後に使ったMIME（エラー時のダウンロードリンク生成に使う）
 };
 
 const el = {
-  recordBtn: document.getElementById('recordBtn'),
-  elapsed: document.getElementById('elapsed'),
-  recordingMime: document.getElementById('recordingMime'),
-  logArea: document.getElementById('logArea'),
-  transcriptText: document.getElementById('transcriptText'),
-  claudeRaw: document.getElementById('claudeRaw'),
-  reportFrame: document.getElementById('reportFrame'),
-  audioPlayer: document.getElementById('audioPlayer'),
-  downloadArea: document.getElementById('downloadArea'),
+  recordBtn:           document.getElementById('recordBtn'),
+  recordBtnLabel:      document.getElementById('recordBtnLabel'),
+  elapsed:             document.getElementById('elapsed'),
+  logArea:             document.getElementById('logArea'),
+  transcriptText:      document.getElementById('transcriptText'),
+  claudeRaw:           document.getElementById('claudeRaw'),
+  reportFrame:         document.getElementById('reportFrame'),
+  audioPlayer:         document.getElementById('audioPlayer'),
+  downloadArea:        document.getElementById('downloadArea'),
+  restartBtn:          document.getElementById('restartBtn'),
+  overlayProcessing:   document.getElementById('overlayProcessing'),
+  overlayError:        document.getElementById('overlayError'),
+  processingStep:      document.getElementById('processingStep'),
+  processingProgress:  document.getElementById('processingProgress'),
+  errorStep:           document.getElementById('errorStep'),
+  errorMessage:        document.getElementById('errorMessage'),
+  errorDownloadArea:   document.getElementById('errorDownloadArea'),
+  errorBackBtn:        document.getElementById('errorBackBtn'),
 };
 
 // ---------------------------------------------------
-// ログ
+// 画面・オーバーレイ制御
+// ---------------------------------------------------
+function switchScreen(name) {
+  document.body.dataset.screen = name;
+  // 結果画面へ遷移する際は先頭にスクロール
+  if (name === 'result') window.scrollTo(0, 0);
+}
+
+function showOverlay(type) {
+  // 一旦両方閉じてから対象を開く
+  el.overlayProcessing.classList.remove('active');
+  el.overlayError.classList.remove('active');
+  if (type === 'processing') el.overlayProcessing.classList.add('active');
+  else if (type === 'error') el.overlayError.classList.add('active');
+}
+
+function hideOverlay() {
+  el.overlayProcessing.classList.remove('active');
+  el.overlayError.classList.remove('active');
+}
+
+// オーバーレイのステップ名・進捗表示を更新する
+// current/total が未指定なら進捗部分は空にする
+function setProcessingStep(stepName, current, total) {
+  el.processingStep.textContent = stepName + '…';
+  if (typeof current === 'number' && typeof total === 'number') {
+    el.processingProgress.textContent = `${current} / ${total}`;
+  } else {
+    el.processingProgress.textContent = '';
+  }
+}
+
+function setErrorMessage(stepName, message, segments, mime) {
+  el.errorStep.textContent = stepName;
+  el.errorMessage.textContent = message;
+  // 録音保持: エラー画面用のダウンロードリンクを生成
+  el.errorDownloadArea.innerHTML = '';
+  if (segments && segments.length > 0) {
+    renderDownloadLinks(el.errorDownloadArea, segments, mime);
+  } else {
+    el.errorDownloadArea.innerHTML = '<p class="text-xs text-gray-500">（録音データがありません）</p>';
+  }
+}
+
+// ---------------------------------------------------
+// ログ（詳細セクションの「進捗ログ」へ追記）
 // ---------------------------------------------------
 function log(msg, level = 'info') {
   const colors = { info: 'text-gray-100', ok: 'text-green-300', err: 'text-red-300', warn: 'text-yellow-300' };
@@ -149,14 +277,14 @@ async function startRecording() {
     state.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
     log('マイクへのアクセスが拒否されました: ' + e.message, 'err');
+    alert('マイクへのアクセスが拒否されました。ブラウザの設定を確認してください。');
     return;
   }
 
   state.mimeType = pickMimeType();
-  el.recordingMime.textContent = '録音形式: ' + (state.mimeType || '(ブラウザデフォルト)') + ` / 64kbps / ${SEGMENT_DURATION_MS / 60000}分ごとに自動分割`;
   state.segments = [];
+  log(`録音形式: ${state.mimeType || '(ブラウザデフォルト)'} / 64kbps / ${SEGMENT_DURATION_MS / 60000}分ごとに自動分割`);
 
-  // 最初のセグメント開始
   if (!startNewSegment()) {
     stopStream();
     return;
@@ -169,17 +297,14 @@ async function startRecording() {
     el.elapsed.textContent = fmtElapsed(Date.now() - state.startTime);
   }, 500);
 
-  // 5分ごとにセグメントをローテーション（録音は継続）
   state.segmentTimerId = setInterval(rotateSegment, SEGMENT_DURATION_MS);
 
-  el.recordBtn.textContent = '■ 録音終了';
+  el.recordBtnLabel.textContent = '■ 録音終了';
   el.recordBtn.classList.remove('bg-red-600');
   el.recordBtn.classList.add('bg-gray-700');
   log('録音開始', 'ok');
 }
 
-// 新しいセグメントの MediaRecorder を作成して録音開始
-// onstop ハンドラ内で：継続中なら次セグメント開始、停止指示なら最終処理を行う
 function startNewSegment() {
   // 64kbps固定。家族会議の人声であれば文字起こし精度に影響しない。
   // Netlify Functionsの6MB制限を確実に下回らせるため明示指定する。
@@ -205,7 +330,6 @@ function startNewSegment() {
       state.segments.push(blob);
       const sizeKB = (blob.size / 1024).toFixed(1);
       const sizeMB = blob.size / 1024 / 1024;
-      // 5MB超は6MB制限ギリギリなので警告（multipart/form-dataのオーバーヘッド込みで超える可能性）
       if (sizeMB > 5) {
         log(`セグメント${state.segments.length} 確定（${sizeKB} KB）⚠️ サイズが大きすぎる可能性`, 'warn');
       } else {
@@ -213,10 +337,8 @@ function startNewSegment() {
       }
     }
     if (state.recording) {
-      // 録音継続中：次セグメントへ
       startNewSegment();
     } else {
-      // ユーザーが停止：最終化
       finalizeRecording(usedMime);
     }
   };
@@ -225,7 +347,6 @@ function startNewSegment() {
   return true;
 }
 
-// 5分タイマーが発火した際の処理：現セグメントを stop（onstop で次セグメントが自動開始）
 function rotateSegment() {
   if (!state.recording) return;
   if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
@@ -234,8 +355,6 @@ function rotateSegment() {
 }
 
 function stopRecording() {
-  // タイマーを止めてからフラグを下ろし、現セグメントを停止する
-  // onstop は recording=false を見て finalizeRecording を呼ぶ
   if (state.segmentTimerId) {
     clearInterval(state.segmentTimerId);
     state.segmentTimerId = null;
@@ -256,19 +375,20 @@ function stopStream() {
 async function finalizeRecording(usedMime) {
   clearInterval(state.timerId);
   state.timerId = null;
-  el.recordBtn.textContent = '● 録音開始';
+  el.recordBtnLabel.textContent = '● 録音開始';
   el.recordBtn.classList.add('bg-red-600');
   el.recordBtn.classList.remove('bg-gray-700');
   stopStream();
 
+  state.lastUsedMime = usedMime;
   const segments = state.segments;
   if (segments.length === 0) {
     log('録音データがありません', 'err');
     return;
   }
 
-  // ダウンロードリンクと再生プレイヤーを構築
-  renderDownloadLinks(segments, usedMime);
+  // 結果画面用の音声プレイヤー・ダウンロードリンク
+  renderDownloadLinks(el.downloadArea, segments, usedMime);
   el.audioPlayer.src = URL.createObjectURL(segments[0]);
 
   const totalKB = (segments.reduce((sum, b) => sum + b.size, 0) / 1024).toFixed(1);
@@ -277,20 +397,20 @@ async function finalizeRecording(usedMime) {
   await runPipeline(segments, usedMime);
 }
 
-function renderDownloadLinks(segments, mime) {
+function renderDownloadLinks(targetEl, segments, mime) {
   const ext = extFromMime(mime);
-  el.downloadArea.innerHTML = '';
+  targetEl.innerHTML = '';
   if (segments.length === 1) {
-    el.downloadArea.appendChild(buildDownloadAnchor(segments[0], `recording.${ext}`, '録音ファイルをダウンロード'));
+    targetEl.appendChild(buildDownloadAnchor(segments[0], `recording.${ext}`, '録音ファイルをダウンロード'));
   } else {
     const note = document.createElement('p');
     note.className = 'text-xs text-gray-500';
-    note.textContent = `${segments.length}個のセグメントに分割されています（先頭セグメントを再生プレイヤーで確認できます）`;
-    el.downloadArea.appendChild(note);
+    note.textContent = `${segments.length}個のセグメントに分割されています`;
+    targetEl.appendChild(note);
     segments.forEach((blob, i) => {
       const num = String(i + 1).padStart(2, '0');
       const sizeKB = (blob.size / 1024).toFixed(1);
-      el.downloadArea.appendChild(
+      targetEl.appendChild(
         buildDownloadAnchor(blob, `recording-${num}.${ext}`, `セグメント${i + 1} (${sizeKB} KB)`)
       );
     });
@@ -314,8 +434,6 @@ el.recordBtn.addEventListener('click', () => {
 // ---------------------------------------------------
 // 文字起こし（Netlify Functions 経由で Whisper を呼ぶ）
 // ---------------------------------------------------
-
-// 単一セグメントの文字起こし
 async function transcribeSegment(blob, mime, index) {
   const form = new FormData();
   const filename = `recording-${String(index + 1).padStart(2, '0')}.` + extFromMime(mime);
@@ -335,7 +453,6 @@ async function transcribeSegment(blob, mime, index) {
   return data.text || '';
 }
 
-// 全セグメントを並列で文字起こしし、テキストを結合して返す
 async function transcribeAllSegments(segments, mime) {
   log(`文字起こし開始（Whisper, ${segments.length}セグメント並列）`);
 
@@ -345,14 +462,14 @@ async function transcribeAllSegments(segments, mime) {
       .then(text => {
         completed++;
         log(`セグメント${i + 1} 完了（${completed}/${segments.length}）`, 'ok');
+        // オーバーレイの進捗を更新
+        setProcessingStep('文字起こし中', completed, segments.length);
         return text;
       })
   );
 
-  // 1つでも失敗したら全体失敗扱い
   const texts = await Promise.all(tasks);
   log('文字起こし完了', 'ok');
-  // チャンク境界が分かるよう改行2つで連結
   return texts.join('\n\n');
 }
 
@@ -383,13 +500,12 @@ async function structureWithClaude(transcript) {
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    // コードフェンスが紛れ込んだ場合のフォールバック
     const m = raw.match(/\{[\s\S]*\}/);
     if (m) {
       try { parsed = JSON.parse(m[0]); }
-      catch (e2) { throw new Error('ClaudeのJSONパースに失敗。raw出力を上の欄で確認してください。'); }
+      catch (e2) { throw new Error('ClaudeのJSONパースに失敗。raw出力を詳細セクションで確認してください。'); }
     } else {
-      throw new Error('ClaudeのJSONパースに失敗。raw出力を上の欄で確認してください。');
+      throw new Error('ClaudeのJSONパースに失敗。raw出力を詳細セクションで確認してください。');
     }
   }
   log('構造化完了', 'ok');
@@ -470,23 +586,36 @@ async function runPipeline(segments, mime) {
   el.claudeRaw.textContent = '';
   el.reportFrame.srcdoc = '';
 
+  // 処理中オーバーレイを表示
+  setProcessingStep('文字起こし中', 0, segments.length);
+  showOverlay('processing');
+
+  // 文字起こし
   let transcript;
   try {
     transcript = await transcribeAllSegments(segments, mime);
     el.transcriptText.textContent = transcript;
   } catch (e) {
     log('文字起こし失敗: ' + e.message, 'err');
+    setErrorMessage('文字起こし失敗', e.message, segments, mime);
+    showOverlay('error');
     return;
   }
 
+  // 構造化
+  setProcessingStep('レポート生成中');
   let structured;
   try {
     structured = await structureWithClaude(transcript);
   } catch (e) {
     log('レポート生成失敗: ' + e.message, 'err');
+    setErrorMessage('レポート生成失敗', e.message, segments, mime);
+    showOverlay('error');
     return;
   }
 
+  // HTML生成
+  setProcessingStep('HTML生成中');
   try {
     log('HTML生成開始');
     const html = buildReportHtml(structured);
@@ -494,9 +623,45 @@ async function runPipeline(segments, mime) {
     log('HTML生成完了', 'ok');
   } catch (e) {
     log('HTML生成失敗: ' + e.message, 'err');
+    setErrorMessage('HTML生成失敗', e.message, segments, mime);
+    showOverlay('error');
+    return;
   }
+
+  // 成功 → 結果画面へ
+  hideOverlay();
+  switchScreen('result');
 }
+
+// ---------------------------------------------------
+// 「もう一度録音する」「録音画面に戻る」
+// ---------------------------------------------------
+function handleRestart() {
+  // 結果と録音データをクリア
+  el.transcriptText.textContent = '';
+  el.claudeRaw.textContent = '';
+  el.reportFrame.srcdoc = '';
+  if (el.audioPlayer.src) {
+    URL.revokeObjectURL(el.audioPlayer.src);
+    el.audioPlayer.removeAttribute('src');
+    el.audioPlayer.load();
+  }
+  el.downloadArea.innerHTML = '';
+  el.errorDownloadArea.innerHTML = '';
+  el.logArea.innerHTML = '<div class="log-line text-gray-400">（ここにログが表示されます）</div>';
+  state.segments = [];
+  state.lastUsedMime = '';
+  el.elapsed.textContent = '00:00';
+
+  hideOverlay();
+  switchScreen('recording');
+}
+
+el.restartBtn.addEventListener('click', handleRestart);
+el.errorBackBtn.addEventListener('click', handleRestart);
 
 </script>
 </body>
 </html>
+</content>
+</invoke>
