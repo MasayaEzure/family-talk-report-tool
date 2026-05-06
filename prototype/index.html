@@ -35,6 +35,23 @@
   summary::-webkit-details-marker { display: none; }
   summary::marker { content: ''; }
 
+  /* 開閉に応じて回転するシェブロン（独自の三角マーカー） */
+  summary::before {
+    content: '';
+    display: inline-block;
+    width: 0;
+    height: 0;
+    margin-right: 0.5em;
+    border-left: 6px solid currentColor;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    vertical-align: middle;
+    transition: transform 0.15s ease;
+  }
+  details[open] > summary::before {
+    transform: rotate(90deg);
+  }
+
   /* 録音ボタン: モバイルで親指で押せる大きさ */
   .record-btn {
     width: 160px; height: 160px;
