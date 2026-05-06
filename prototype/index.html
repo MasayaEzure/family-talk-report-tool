@@ -35,18 +35,16 @@
   summary::-webkit-details-marker { display: none; }
   summary::marker { content: ''; }
 
-  /* 開閉に応じて回転するシェブロン（独自の三角マーカー）
-     Tailwind preflight が ::before の border を 0 にリセットするため、
-     CSSのborderトリックではなくUnicode文字で描画する */
-  summary::before {
-    content: '▶';
+  /* 開閉に応じて回転するシェブロン
+     <summary> 内の <span class="chev"> をDOM要素として配置し、
+     details[open] のときに 90度回転させる */
+  .chev {
     display: inline-block;
     margin-right: 0.5em;
     font-size: 0.75em;
-    color: currentColor;
     transition: transform 0.15s ease;
   }
-  details[open] > summary::before {
+  details[open] > summary .chev {
     transform: rotate(90deg);
   }
 
@@ -97,16 +95,16 @@
 
     <!-- 詳細セクション（折りたたみ） -->
     <details class="bg-white rounded-lg shadow">
-      <summary class="cursor-pointer px-4 py-3 font-medium text-sm">詳細を見る</summary>
+      <summary class="cursor-pointer px-4 py-3 font-medium text-sm"><span class="chev">▶</span>詳細を見る</summary>
       <div class="px-4 pb-4 space-y-3">
 
         <details class="border rounded">
-          <summary class="cursor-pointer px-3 py-2 bg-gray-50 text-sm font-medium">文字起こし全文</summary>
+          <summary class="cursor-pointer px-3 py-2 bg-gray-50 text-sm font-medium"><span class="chev">▶</span>文字起こし全文</summary>
           <pre id="transcriptText" class="p-3 text-sm whitespace-pre-wrap break-words"></pre>
         </details>
 
         <details class="border rounded">
-          <summary class="cursor-pointer px-3 py-2 bg-gray-50 text-sm font-medium">Claude 生JSON出力</summary>
+          <summary class="cursor-pointer px-3 py-2 bg-gray-50 text-sm font-medium"><span class="chev">▶</span>Claude 生JSON出力</summary>
           <pre id="claudeRaw" class="p-3 text-sm whitespace-pre-wrap break-words"></pre>
         </details>
 
