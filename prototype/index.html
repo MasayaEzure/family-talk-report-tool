@@ -36,13 +36,16 @@
   summary::marker { content: ''; }
 
   /* 開閉に応じて回転するシェブロン
-     <summary> 内の <span class="chev"> をDOM要素として配置し、
-     details[open] のときに 90度回転させる */
+     インラインSVGで描画。Unicode文字やborderトリックは
+     環境依存で見えなくなることがあるため SVG を採用。 */
   .chev {
     display: inline-block;
+    width: 10px;
+    height: 10px;
     margin-right: 0.5em;
-    font-size: 0.75em;
+    vertical-align: middle;
     transition: transform 0.15s ease;
+    flex-shrink: 0;
   }
   details[open] > summary .chev {
     transform: rotate(90deg);
@@ -95,16 +98,16 @@
 
     <!-- 詳細セクション（折りたたみ） -->
     <details class="bg-white rounded-lg shadow">
-      <summary class="cursor-pointer px-4 py-3 font-medium text-sm"><span class="chev">▶</span>詳細を見る</summary>
+      <summary class="cursor-pointer px-4 py-3 font-medium text-sm"><svg class="chev" viewBox="0 0 10 10" aria-hidden="true"><polygon points="2,1 8,5 2,9" fill="currentColor"/></svg>詳細を見る</summary>
       <div class="px-4 pb-4 space-y-3">
 
         <details class="border rounded">
-          <summary class="cursor-pointer px-3 py-2 bg-gray-50 text-sm font-medium"><span class="chev">▶</span>文字起こし全文</summary>
+          <summary class="cursor-pointer px-3 py-2 bg-gray-50 text-sm font-medium"><svg class="chev" viewBox="0 0 10 10" aria-hidden="true"><polygon points="2,1 8,5 2,9" fill="currentColor"/></svg>文字起こし全文</summary>
           <pre id="transcriptText" class="p-3 text-sm whitespace-pre-wrap break-words"></pre>
         </details>
 
         <details class="border rounded">
-          <summary class="cursor-pointer px-3 py-2 bg-gray-50 text-sm font-medium"><span class="chev">▶</span>Claude 生JSON出力</summary>
+          <summary class="cursor-pointer px-3 py-2 bg-gray-50 text-sm font-medium"><svg class="chev" viewBox="0 0 10 10" aria-hidden="true"><polygon points="2,1 8,5 2,9" fill="currentColor"/></svg>Claude 生JSON出力</summary>
           <pre id="claudeRaw" class="p-3 text-sm whitespace-pre-wrap break-words"></pre>
         </details>
 
