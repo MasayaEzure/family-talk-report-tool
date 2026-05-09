@@ -93,6 +93,33 @@
   </header>
 
   <main class="max-w-3xl mx-auto p-4 space-y-4">
+    <!-- 共有エリア（デプロイ結果） -->
+    <section class="bg-white rounded-lg shadow p-4">
+      <!-- 成功時 -->
+      <div id="shareSuccess" class="hidden space-y-3">
+        <div class="text-sm font-medium">🎉 家族に共有できる準備ができました</div>
+        <a id="reportUrlLink" target="_blank" rel="noopener"
+           class="block text-blue-600 hover:underline break-all text-sm font-mono"></a>
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="copyBtn" class="px-3 py-2 rounded bg-gray-800 text-white text-sm">コピー</button>
+          <button id="shareBtn" class="px-3 py-2 rounded bg-blue-600 text-white text-sm">共有</button>
+          <span id="copyFeedback" class="text-xs text-green-600 hidden">コピーしました</span>
+        </div>
+      </div>
+      <!-- 失敗時 -->
+      <div id="shareError" class="hidden space-y-3">
+        <div class="text-sm font-medium text-amber-700">⚠️ デプロイに失敗しました</div>
+        <pre id="deployErrorMsg" class="text-xs whitespace-pre-wrap break-words bg-gray-100 rounded p-2 max-h-40 overflow-auto"></pre>
+        <button id="manualDeployBtn" class="px-3 py-2 rounded bg-gray-800 text-white text-sm font-medium">
+          手動でデプロイする
+        </button>
+      </div>
+      <!-- 初期状態（pipeline実行前/もう一度録音する直後） -->
+      <div id="shareIdle" class="text-sm text-gray-500">
+        （デプロイ完了後にURLが表示されます）
+      </div>
+    </section>
+
     <!-- レポートプレビュー -->
     <iframe id="reportFrame" class="w-full h-[70vh] border rounded bg-white"></iframe>
 
@@ -182,7 +209,8 @@ const state = {
   timerId: null,
   segmentTimerId: null,
   mimeType: '',
-  lastUsedMime: '',  // 最後に使ったMIME（エラー時のダウンロードリンク生成に使う）
+  lastUsedMime: '',     // 最後に使ったMIME（エラー時のダウンロードリンク生成に使う）
+  lastReportHtml: null, // 直近で生成したHTMLレポート（手動デプロイで再利用）
 };
 
 const el = {
@@ -204,6 +232,16 @@ const el = {
   errorMessage:        document.getElementById('errorMessage'),
   errorDownloadArea:   document.getElementById('errorDownloadArea'),
   errorBackBtn:        document.getElementById('errorBackBtn'),
+  // 共有エリア
+  shareSuccess:        document.getElementById('shareSuccess'),
+  shareError:          document.getElementById('shareError'),
+  shareIdle:           document.getElementById('shareIdle'),
+  reportUrlLink:       document.getElementById('reportUrlLink'),
+  copyBtn:             document.getElementById('copyBtn'),
+  shareBtn:            document.getElementById('shareBtn'),
+  copyFeedback:        document.getElementById('copyFeedback'),
+  deployErrorMsg:      document.getElementById('deployErrorMsg'),
+  manualDeployBtn:     document.getElementById('manualDeployBtn'),
 };
 
 // ---------------------------------------------------
@@ -640,10 +678,12 @@ async function runPipeline(segments, mime) {
 
   // HTML生成
   setProcessingStep('HTML生成中');
+  let html;
   try {
     log('HTML生成開始');
-    const html = buildReportHtml(structured);
+    html = buildReportHtml(structured);
     el.reportFrame.srcdoc = html;
+    state.lastReportHtml = html; // 手動デプロイ用に保持
     log('HTML生成完了', 'ok');
   } catch (e) {
     log('HTML生成失敗: ' + e.message, 'err');
@@ -652,10 +692,138 @@ async function runPipeline(segments, mime) {
     return;
   }
 
-  // 成功 → 結果画面へ
+  // デプロイ（失敗してもオーバーレイには出さず、結果画面で再試行できるようにする）
+  setProcessingStep('デプロイ中');
+  let deployedUrl = null;
+  let deployErrorMsg = null;
+  try {
+    deployedUrl = await deployReport(html);
+  } catch (e) {
+    deployErrorMsg = e.message;
+    log('デプロイ失敗: ' + e.message, 'err');
+  }
+
+  // 共有エリアの状態を更新
+  if (deployedUrl) {
+    showShareSuccess(deployedUrl);
+  } else {
+    showShareError(deployErrorMsg);
+  }
+
+  // 結果画面へ
   hideOverlay();
   switchScreen('result');
 }
+
+// ---------------------------------------------------
+// デプロイ（Netlify Functions 経由で Netlify Deploy API を呼ぶ）
+// ---------------------------------------------------
+async function deployReport(html) {
+  log('デプロイ開始（Netlify）');
+  const res = await fetch('/.netlify/functions/deploy', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ html }),
+  });
+  const bodyText = await res.text();
+  if (!res.ok) {
+    throw new Error('デプロイ失敗 (HTTP ' + res.status + '): ' + bodyText);
+  }
+  let data;
+  try { data = JSON.parse(bodyText); }
+  catch (e) { throw new Error('デプロイレスポンスの解析失敗: ' + bodyText); }
+  log('デプロイ完了: ' + data.url, 'ok');
+  return data.url;
+}
+
+// ---------------------------------------------------
+// 共有エリア（URL表示・コピー・共有・手動デプロイ）
+// ---------------------------------------------------
+function showShareSuccess(url) {
+  el.shareIdle.classList.add('hidden');
+  el.shareError.classList.add('hidden');
+  el.shareSuccess.classList.remove('hidden');
+  el.reportUrlLink.textContent = url;
+  el.reportUrlLink.href = url;
+}
+
+function showShareError(message) {
+  el.shareIdle.classList.add('hidden');
+  el.shareSuccess.classList.add('hidden');
+  el.shareError.classList.remove('hidden');
+  el.deployErrorMsg.textContent = message || '不明なエラー';
+}
+
+function showShareIdle() {
+  el.shareSuccess.classList.add('hidden');
+  el.shareError.classList.add('hidden');
+  el.shareIdle.classList.remove('hidden');
+  el.reportUrlLink.textContent = '';
+  el.reportUrlLink.href = '#';
+  el.deployErrorMsg.textContent = '';
+}
+
+async function handleCopy() {
+  const url = el.reportUrlLink.href;
+  if (!url || url === '#') return;
+  try {
+    await navigator.clipboard.writeText(url);
+    el.copyFeedback.classList.remove('hidden');
+    setTimeout(() => el.copyFeedback.classList.add('hidden'), 2000);
+  } catch (e) {
+    log('コピー失敗: ' + e.message, 'err');
+    alert('コピーに失敗しました: ' + e.message);
+  }
+}
+
+async function handleShare() {
+  if (!navigator.share) return;
+  const url = el.reportUrlLink.href;
+  if (!url || url === '#') return;
+  try {
+    await navigator.share({
+      title: '家族会議レポート',
+      text: '家族会議のレポートができました',
+      url: url,
+    });
+  } catch (e) {
+    // ユーザーキャンセル時は無視
+    if (e.name !== 'AbortError') {
+      log('共有失敗: ' + e.message, 'warn');
+    }
+  }
+}
+
+async function handleManualDeploy() {
+  if (!state.lastReportHtml) {
+    log('再デプロイするレポートがありません', 'err');
+    return;
+  }
+  const btn = el.manualDeployBtn;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'デプロイ中…';
+  btn.classList.add('opacity-60');
+  try {
+    const url = await deployReport(state.lastReportHtml);
+    showShareSuccess(url);
+  } catch (e) {
+    showShareError(e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+    btn.classList.remove('opacity-60');
+  }
+}
+
+// Web Share API 非対応環境では共有ボタンを非表示にする
+if (!navigator.share) {
+  el.shareBtn.style.display = 'none';
+}
+
+el.copyBtn.addEventListener('click', handleCopy);
+el.shareBtn.addEventListener('click', handleShare);
+el.manualDeployBtn.addEventListener('click', handleManualDeploy);
 
 // ---------------------------------------------------
 // 「もう一度録音する」「録音画面に戻る」
@@ -675,7 +843,11 @@ function handleRestart() {
   el.logArea.innerHTML = '<div class="log-line text-gray-400">（ここにログが表示されます）</div>';
   state.segments = [];
   state.lastUsedMime = '';
+  state.lastReportHtml = null;
   el.elapsed.textContent = '00:00';
+
+  // 共有エリアを初期状態に戻す
+  showShareIdle();
 
   hideOverlay();
   switchScreen('recording');
